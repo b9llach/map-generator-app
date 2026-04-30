@@ -563,6 +563,13 @@
 
         <Collapsible :is-open="panels.marker" class="p-1">
           <Checkbox
+            v-model="settings.placeMarkers"
+            title="Disable to skip placing pins on the map during generation. Greatly reduces lag for large location counts. Found locations are still recorded and exportable."
+          >
+            Place markers on map
+          </Checkbox>
+          <hr />
+          <Checkbox
             v-model="settings.markers.noBlueLine"
             v-on:change="updateMarkerLayers('noBlueLine')"
           >
@@ -1174,19 +1181,24 @@ function addLoc(pano: google.maps.StreetViewPanoramaData, polygon: Polygon) {
   // New road
   if (!previousPano) {
     checkHasBlueLine(pano.location.latLng.toJSON()).then((hasBlueLine) => {
-      addLocation(location, polygon, hasBlueLine ? icons.newLoc : icons.noBlueLine)
+      addLocation(
+        location,
+        polygon,
+        hasBlueLine ? icons.newLoc : icons.noBlueLine,
+        settings.placeMarkers,
+      )
     })
   } else {
     SV.getPanorama({ pano: previousPano }, (previousPano) => {
       if (previousPano.tiles.worldSize.height === 1664) {
         // Gen 1
-        return addLocation(location, polygon, icons.gen1)
+        return addLocation(location, polygon, icons.gen1, settings.placeMarkers)
       } else if (previousPano.tiles.worldSize.height === 6656) {
         // Gen 2 or 3
-        return addLocation(location, polygon, icons.gen2Or3)
+        return addLocation(location, polygon, icons.gen2Or3, settings.placeMarkers)
       } else {
         // Gen 4
-        return addLocation(location, polygon, icons.gen4)
+        return addLocation(location, polygon, icons.gen4, settings.placeMarkers)
       }
     })
   }

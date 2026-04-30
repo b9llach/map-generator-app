@@ -231,11 +231,14 @@ const defaultSettings = {
     noBlueLine: true,
     cluster: false,
   },
+  placeMarkers: true,
   markersOnImport: true,
   checkImports: false,
 }
 
-const storedSettings = useStorage('map_generator__settings_v11', defaultSettings)
+const storedSettings = useStorage('map_generator__settings_v11', defaultSettings, undefined, {
+  mergeDefaults: true,
+})
 const settings = reactive(storedSettings.value)
 settings.toDate = currentDate
 settings.toYear = currentYear
