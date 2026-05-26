@@ -292,6 +292,7 @@ export async function startMcpServer(window: BrowserWindow): Promise<McpStatus> 
 
   const mcp = buildMcpServer(window)
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
+  transport.onerror = (err) => console.error('[mcp] transport error:', err)
   await mcp.connect(transport)
 
   const app = express()
@@ -301,8 +302,17 @@ export async function startMcpServer(window: BrowserWindow): Promise<McpStatus> 
     try {
       await transport.handleRequest(req, res, req.body)
     } catch (err) {
-      console.error('MCP request error:', err)
-      if (!res.headersSent) res.status(500).end()
+      console.error('[mcp] request error:', err)
+      if (!res.headersSent) {
+        res
+          .status(500)
+          .type('application/json')
+          .json({
+            error: 'mcp_handler_error',
+            message: err instanceof Error ? err.message : String(err),
+            stack: err instanceof Error ? err.stack?.split('\n').slice(0, 5) : undefined,
+          })
+      }
     }
   }
   app.post('/mcp', handle)
