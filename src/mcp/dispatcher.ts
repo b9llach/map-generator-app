@@ -8,6 +8,7 @@ import {
   clearMarkers,
   getLoadedLayers,
 } from '@/map'
+import { getCoverage, type CoverageCategory } from './coverage'
 import type {
   ListTerritoriesArgs,
   McpToolName,
@@ -32,6 +33,7 @@ interface TerritoryRecord {
   country?: string
   layer: string
   layerLabel: string
+  coverage: CoverageCategory
 }
 
 async function listTerritories(args: ListTerritoriesArgs): Promise<TerritoryRecord[]> {
@@ -40,7 +42,9 @@ async function listTerritories(args: ListTerritoriesArgs): Promise<TerritoryReco
     : availableLayers.value
 
   const search = args.search?.toLowerCase()
+  const coverageFilter = args.coverage && args.coverage !== 'any' ? args.coverage : undefined
   const results: TerritoryRecord[] = []
+  const seenCodes = new Set<string>()
 
   for (const layerMeta of layers) {
     const loaded = await ensureLayerLoaded(layerMeta.key)
@@ -53,12 +57,20 @@ async function listTerritories(args: ListTerritoriesArgs): Promise<TerritoryReco
         const haystack = `${props.name ?? ''} ${props.code ?? ''}`.toLowerCase()
         if (!haystack.includes(search)) return
       }
+      const coverage = getCoverage(props.code)
+      if (coverageFilter && coverage !== coverageFilter) return
+      // world_borders has multiple features per multi-polygon country (e.g. RU, ES, US territories).
+      // Dedupe by code+layer so the agent gets one row per country.
+      const dedupeKey = `${layerMeta.key}::${props.code ?? props.name}`
+      if (seenCodes.has(dedupeKey)) return
+      seenCodes.add(dedupeKey)
       results.push({
         name: props.name,
         code: props.code,
         country: props.country,
         layer: layerMeta.key,
         layerLabel: layerMeta.label,
+        coverage,
       })
     })
   }

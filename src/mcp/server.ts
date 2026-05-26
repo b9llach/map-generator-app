@@ -63,7 +63,7 @@ function buildMcpServer(window: BrowserWindow): McpServer {
     {
       title: 'List all available territories',
       description:
-        'Lists every polygon/territory the app knows about across world_borders and any custom GeoJSON layers in the geojson folder. Useful for discovering what is available before calling select_territories.',
+        'Lists every polygon/territory the app knows about across world_borders and any custom GeoJSON layers in the geojson folder. Each result includes a Google Street View coverage category (official / mixed / unofficial / none / unknown) sourced from a curated map - use the `coverage` parameter to filter (e.g. only countries with full Google-car coverage). Useful for discovering what is available before calling select_territories.',
       inputSchema: {
         layer: z
           .string()
@@ -73,6 +73,12 @@ function buildMcpServer(window: BrowserWindow): McpServer {
           .string()
           .optional()
           .describe('Case-insensitive substring filter on territory name or code.'),
+        coverage: z
+          .enum(['official', 'mixed', 'unofficial', 'none', 'unknown', 'any'])
+          .optional()
+          .describe(
+            "Filter by Google Street View coverage: 'official' (full Google-car coverage), 'mixed' (partial / city-limited Google-car coverage), 'unofficial' (only community Ari photospheres, no Google-car), 'none' (no Street View at all), 'unknown' (not in the curated dataset), or 'any' to include everything (default).",
+          ),
       },
     },
     async (args) => jsonResult(await callRenderer(window, 'list_territories', args)),

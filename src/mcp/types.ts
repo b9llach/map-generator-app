@@ -47,4 +47,5 @@ export interface SetNbNeededArgs {
 export interface ListTerritoriesArgs {
   layer?: string
   search?: string
+  coverage?: 'official' | 'mixed' | 'unofficial' | 'none' | 'unknown' | 'any'
 }
