@@ -66,6 +66,18 @@
             accept=".txt,.json,.geojson"
           /> -->
         </Collapsible>
+        <div v-if="mcpStatus" class="text-xs px-1 pt-1 border-t border-white/10 mt-1">
+          <span v-if="mcpStatus.listening" class="flex items-center gap-1">
+            <span class="h-2 w-2 rounded-full bg-green-500"></span>
+            <span class="truncate cursor-pointer" :title="'Click to copy: ' + mcpStatus.url" @click="copyMcpUrl">
+              MCP: {{ mcpStatus.url }}
+            </span>
+          </span>
+          <span v-else class="flex items-center gap-1 text-red-300">
+            <span class="h-2 w-2 rounded-full bg-red-500"></span>
+            MCP: {{ mcpStatus.error ?? 'not running' }}
+          </span>
+        </div>
       </div>
 
       <div v-if="!state.started" class="container font-bold text-center">{{ select }}</div>
@@ -652,6 +664,7 @@ import ChevronDownIcon from '@/assets/icons/chevron-down.svg'
 
 import { useStore } from '@/store'
 import { settings } from '@/settings'
+import { dispatchMcpRequest } from '@/mcp/dispatcher'
 
 import {
   L,
@@ -694,6 +707,7 @@ import {
 const { currentDate } = getCurrentDate()
 
 const currentVersion = ref('')
+const mcpStatus = ref<{ url: string; port: number; listening: boolean; error?: string } | null>(null)
 const SV = new google.maps.StreetViewService()
 
 watch(
@@ -746,7 +760,22 @@ function clearAllLocations() {
 onMounted(async () => {
   await initMap('map')
   currentVersion.value = await electronAPI.invoke('get-current-version')
+
+  electronAPI.onMcpRequest((payload) => dispatchMcpRequest(payload))
+  electronAPI.onMcpStatus((status) => {
+    mcpStatus.value = status
+  })
+  const initial = await electronAPI.invoke('get-mcp-status')
+  if (initial) mcpStatus.value = initial
 })
+
+// MCP-driven start/stop: agents flip state.started; we react here.
+watch(
+  () => state.started,
+  (newVal, oldVal) => {
+    if (newVal && !oldVal) start()
+  },
+)
 
 // Process
 document.onkeydown = (event) => {
@@ -761,7 +790,6 @@ document.onkeydown = (event) => {
 
 const handleClickStart = () => {
   state.started = !state.started
-  start()
 }
 
 async function start() {
@@ -1343,6 +1371,15 @@ const handleRadiusInput = (e: Event) => {
 
 async function openFolder() {
   await electronAPI.invoke('open-geojson-folder')
+}
+
+async function copyMcpUrl() {
+  if (!mcpStatus.value?.url) return
+  try {
+    await navigator.clipboard.writeText(mcpStatus.value.url)
+  } catch (err) {
+    console.error('Failed to copy MCP URL:', err)
+  }
 }
 
 async function importSelection(e: Event) {

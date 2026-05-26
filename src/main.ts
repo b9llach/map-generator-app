@@ -4,6 +4,7 @@ import { version } from '../package.json'
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import started from 'electron-squirrel-startup'
 import { updateElectronApp } from 'update-electron-app'
+import { startMcpServer, stopMcpServer, getMcpStatus } from './mcp/server'
 
 if (process.platform == 'win32') updateElectronApp()
 
@@ -48,10 +49,24 @@ const createWindow = () => {
     mainWindow.show()
     mainWindow.maximize()
     if (isDev) mainWindow.webContents.openDevTools()
+
+    startMcpServer(mainWindow)
+      .then((status) => {
+        mainWindow.webContents.send('mcp-status', status)
+      })
+      .catch((err) => {
+        console.error('[mcp] failed to start:', err)
+        mainWindow.webContents.send('mcp-status', {
+          ...getMcpStatus(),
+          listening: false,
+          error: String(err?.message ?? err),
+        })
+      })
   })
 
   // IPC Listeners
   ipcMain.handle('get-current-version', () => version)
+  ipcMain.handle('get-mcp-status', () => getMcpStatus())
 
   ipcMain.handle('open-geojson-folder', () => {
     shell.openPath(customFlagsDir)
@@ -121,4 +136,8 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+app.on('before-quit', async () => {
+  await stopMcpServer().catch((err) => console.error('[mcp] shutdown error:', err))
 })

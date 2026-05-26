@@ -446,6 +446,31 @@ async function selectPolygonsBulk(items: BulkSelectItem[]): Promise<BulkSelectRe
   return { matched: matched.length, unmatched }
 }
 
+function findLayerKeyForPolygon(polygon: Polygon): string | undefined {
+  for (const [key, layer] of Object.entries(loadedLayers)) {
+    let match = false
+    layer.eachLayer((l) => {
+      if ((l as Polygon)._leaflet_id === polygon._leaflet_id) match = true
+    })
+    if (match) return key
+  }
+  return undefined
+}
+
+function deselectAll() {
+  for (const polygon of selected.value as Polygon[]) {
+    // World borders use the hidden style when not selected; custom polygons keep their stroke.
+    // Mirror the per-layer behavior in deselectLayer.
+    const layerKey = findLayerKeyForPolygon(polygon)
+    polygon.setStyle(
+      layerKey === 'world_borders'
+        ? polygonStyles.defaultHidden()
+        : polygonStyles.removeHighlight(),
+    )
+  }
+  selected.value = []
+}
+
 function deselectLayer(layerKey: string) {
   const layer = loadedLayers[layerKey]
   if (!layer) return
@@ -609,12 +634,28 @@ const icons = {
   noBlueLine: L.icon({ iconUrl: markerPink, iconAnchor: [12, 41] }),
 }
 
+async function ensureLayerLoaded(key: string): Promise<L.GeoJSON | undefined> {
+  if (loadedLayers[key]) return loadedLayers[key]
+  const meta = availableLayers.value.find((l) => l.key === key || l.label === key)
+  if (!meta) return undefined
+  return loadLayer(meta as LayerMeta)
+}
+
+function getLoadedLayers() {
+  return loadedLayers
+}
+
 export {
   L,
   initMap,
   selectLayer,
   deselectLayer,
   selectPolygonsBulk,
+  deselectAll,
+  findLayerKeyForPolygon,
+  ensureLayerLoaded,
+  getLoadedLayers,
+  clearPolygon,
   toggleLayer,
   // importLayer,
   exportLayer,
