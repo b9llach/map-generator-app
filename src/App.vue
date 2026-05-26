@@ -27,6 +27,15 @@
           <Button size="sm" title="Open Custom GeoJSON Folder" @click="openFolder"
             >Open Custom GeoJSON Folder</Button
           >
+          <Button
+            size="sm"
+            title='Import a JSON file shaped { "selections": [{ "name": "France", "nbNeeded": 500 }, ...] } to bulk-select polygons.'
+          >
+            <label class="cursor-pointer flex w-full justify-center">
+              <input type="file" accept=".json" hidden @change="importSelection" />
+              Import selection from JSON
+            </label>
+          </Button>
           <div v-for="layer in availableLayers" :key="layer.key" class="flex gap-1 justify-between">
             <Checkbox
               v-model="layer.visible"
@@ -649,6 +658,7 @@ import {
   initMap,
   selectLayer,
   deselectLayer,
+  selectPolygonsBulk,
   toggleLayer,
   exportLayer,
   updateMarkerLayers,
@@ -1333,6 +1343,75 @@ const handleRadiusInput = (e: Event) => {
 
 async function openFolder() {
   await electronAPI.invoke('open-geojson-folder')
+}
+
+async function importSelection(e: Event) {
+  const input = e.target as HTMLInputElement
+  if (!input.files || !input.files[0]) return
+  const file = input.files[0]
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(await readFileAsText(file))
+  } catch (err) {
+    alert('Invalid JSON file.')
+    console.error(err)
+    input.value = ''
+    return
+  }
+
+  const rawItems =
+    parsed && typeof parsed === 'object' && Array.isArray((parsed as { selections?: unknown }).selections)
+      ? (parsed as { selections: unknown[] }).selections
+      : null
+  if (!rawItems) {
+    alert(
+      'Expected JSON shaped:\n{\n  "selections": [\n    { "name": "France", "nbNeeded": 500 },\n    { "code": "JP" }\n  ]\n}',
+    )
+    input.value = ''
+    return
+  }
+
+  const valid: BulkSelectItem[] = []
+  const invalid: unknown[] = []
+  for (const it of rawItems) {
+    if (
+      it &&
+      typeof it === 'object' &&
+      (typeof (it as BulkSelectItem).name === 'string' ||
+        typeof (it as BulkSelectItem).code === 'string')
+    ) {
+      const item = it as Record<string, unknown>
+      valid.push({
+        name: typeof item.name === 'string' ? item.name : undefined,
+        code: typeof item.code === 'string' ? item.code : undefined,
+        layer: typeof item.layer === 'string' ? item.layer : undefined,
+        nbNeeded: typeof item.nbNeeded === 'number' ? item.nbNeeded : undefined,
+      })
+    } else {
+      invalid.push(it)
+    }
+  }
+
+  const { matched, unmatched } = await selectPolygonsBulk(valid)
+
+  let message = `Selected ${matched} polygon${matched === 1 ? '' : 's'}.`
+  if (unmatched.length || invalid.length) {
+    message += '\n\nNot matched:'
+    for (const u of unmatched) {
+      const parts: string[] = []
+      if (u.name) parts.push(u.name)
+      if (u.code) parts.push(`code=${u.code}`)
+      if (u.layer) parts.push(`layer=${u.layer}`)
+      message += `\n- ${parts.join(', ') || '(no name/code)'}`
+    }
+    for (const inv of invalid) {
+      message += `\n- invalid entry: ${JSON.stringify(inv)}`
+    }
+  }
+  alert(message)
+
+  input.value = ''
 }
 
 electronAPI.onCheckBeforeClose(async () => {

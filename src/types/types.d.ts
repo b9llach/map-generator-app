@@ -65,3 +65,15 @@ interface SearchInDescriptionConfig {
   searchMode: 'fullword' | 'startswith' | 'endswith' | 'contains' | 'sectionmatch'
   filterType: 'include' | 'exclude'
 }
+
+interface BulkSelectItem {
+  name?: string
+  code?: string
+  layer?: string
+  nbNeeded?: number
+}
+
+interface BulkSelectResult {
+  matched: number
+  unmatched: BulkSelectItem[]
+}

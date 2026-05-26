@@ -382,6 +382,70 @@ function selectLayer(layerKey: string) {
   selected.value.push(...toAdd)
 }
 
+async function selectPolygonsBulk(items: BulkSelectItem[]): Promise<BulkSelectResult> {
+  const matched: { polygon: Polygon; nbNeeded?: number }[] = []
+  const unmatched: BulkSelectItem[] = []
+  const touchedLayerKeys = new Set<string>()
+
+  for (const item of items) {
+    if (!item.name && !item.code) {
+      unmatched.push(item)
+      continue
+    }
+
+    const layersToSearch = item.layer
+      ? availableLayers.value.filter((l) => l.key === item.layer || l.label === item.layer)
+      : availableLayers.value
+
+    let found: Polygon | undefined
+    const wantedName = item.name?.toLowerCase()
+
+    for (const layerMeta of layersToSearch) {
+      const layer = await loadLayer(layerMeta as LayerMeta)
+      touchedLayerKeys.add(layerMeta.key)
+
+      layer.eachLayer((polyL) => {
+        if (found) return
+        const polygon = polyL as Polygon
+        const props = polygon.feature?.properties as Feature['properties'] | undefined
+        if (!props) return
+
+        const nameMatches = wantedName ? props.name?.toLowerCase() === wantedName : true
+        const codeMatches = item.code ? props.code === item.code : true
+        if (nameMatches && codeMatches) found = polygon
+      })
+
+      if (found) break
+    }
+
+    if (found) matched.push({ polygon: found, nbNeeded: item.nbNeeded })
+    else unmatched.push(item)
+  }
+
+  // Ensure any layer we matched against is visible on the map so the highlight renders
+  for (const key of touchedLayerKeys) {
+    const meta = availableLayers.value.find((l) => l.key === key)
+    if (meta && !meta.visible) {
+      meta.visible = true
+      const loaded = loadedLayers[key]
+      if (loaded && !map.hasLayer(loaded)) map.addLayer(loaded)
+    }
+  }
+
+  const alreadySelectedIds = new Set(selected.value.map((p) => p._leaflet_id))
+  for (const { polygon, nbNeeded } of matched) {
+    if (typeof nbNeeded === 'number' && nbNeeded > 0) {
+      polygon.nbNeeded = nbNeeded
+    }
+    if (!alreadySelectedIds.has(polygon._leaflet_id)) {
+      polygon.setStyle(polygonStyles.highlighted())
+      selected.value.push(polygon)
+    }
+  }
+
+  return { matched: matched.length, unmatched }
+}
+
 function deselectLayer(layerKey: string) {
   const layer = loadedLayers[layerKey]
   if (!layer) return
@@ -550,6 +614,7 @@ export {
   initMap,
   selectLayer,
   deselectLayer,
+  selectPolygonsBulk,
   toggleLayer,
   // importLayer,
   exportLayer,
