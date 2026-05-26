@@ -2,7 +2,7 @@
   "name": "mapgenerator",
   "productName": "MapGenerator",
   "description": "MapGenerator app",
-  "repository": "https://github.com/tzhf/map-generator-app",
+  "repository": "https://github.com/b9llach/map-generator-app",
   "version": "1.0.6",
   "main": ".vite/build/main.js",
   "scripts": {

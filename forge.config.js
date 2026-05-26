@@ -52,7 +52,7 @@ export const publishers = [
     name: '@electron-forge/publisher-github',
     config: {
       repository: {
-        owner: 'tzhf',
+        owner: 'b9llach',
         name: 'map-generator-app',
       },
       prerelease: false,
