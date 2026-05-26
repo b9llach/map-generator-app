@@ -207,14 +207,69 @@ function buildMcpServer(window: BrowserWindow): McpServer {
   return server
 }
 
-function getLanIp(): string {
+// Common Windows / virtual interface names we should not advertise as the LAN URL
+const VIRTUAL_NAME_PATTERNS = [
+  /nordlynx/i,
+  /tailscale/i,
+  /wireguard/i,
+  /^wg\d*$/i,
+  /vethernet/i,
+  /virtualbox/i,
+  /hyper-?v/i,
+  /vpn/i,
+  /docker/i,
+  /vmware/i,
+  /vbox/i,
+  /bluetooth/i,
+  /loopback/i,
+  /utun\d*/i,
+]
+
+interface LanCandidate {
+  name: string
+  address: string
+  virtual: boolean
+}
+
+function isVirtualInterface(name: string): boolean {
+  return VIRTUAL_NAME_PATTERNS.some((re) => re.test(name))
+}
+
+// Higher score = more likely the real LAN interface.
+function scoreAddress(addr: string): number {
+  if (addr.startsWith('192.168.')) return 100
+  if (addr.startsWith('172.')) {
+    const second = Number.parseInt(addr.split('.')[1] ?? '0', 10)
+    if (second >= 16 && second <= 31) return 80
+  }
+  if (addr.startsWith('10.')) return 50
+  return 10
+}
+
+function listLanCandidates(): LanCandidate[] {
   const interfaces = networkInterfaces()
+  const out: LanCandidate[] = []
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name] ?? []) {
-      if (iface.family === 'IPv4' && !iface.internal) return iface.address
+      if (iface.family !== 'IPv4' || iface.internal) continue
+      out.push({ name, address: iface.address, virtual: isVirtualInterface(name) })
     }
   }
-  return '127.0.0.1'
+  return out
+}
+
+function getLanIp(): string {
+  const override = process.env.MAP_GENERATOR_MCP_ANNOUNCE_IP
+  if (override) return override
+
+  const candidates = listLanCandidates()
+  if (!candidates.length) return '127.0.0.1'
+
+  const sorted = [...candidates].sort((a, b) => {
+    if (a.virtual !== b.virtual) return a.virtual ? 1 : -1
+    return scoreAddress(b.address) - scoreAddress(a.address)
+  })
+  return sorted[0].address
 }
 
 let httpServer: HttpServer | null = null
@@ -269,6 +324,15 @@ export async function startMcpServer(window: BrowserWindow): Promise<McpStatus> 
     listening: true,
   }
   console.log(`[mcp] listening at ${status.url} (also reachable on http://127.0.0.1:${port}/mcp)`)
+  const candidates = listLanCandidates()
+  if (candidates.length) {
+    console.log('[mcp] available interfaces (set MAP_GENERATOR_MCP_ANNOUNCE_IP to override):')
+    for (const c of candidates) {
+      const tag = c.virtual ? ' (virtual/VPN)' : ''
+      const primary = c.address === lanIp ? ' <-- advertised' : ''
+      console.log(`[mcp]   http://${c.address}:${port}/mcp  [${c.name}]${tag}${primary}`)
+    }
+  }
   return status
 }
 
