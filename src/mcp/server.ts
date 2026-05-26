@@ -290,16 +290,22 @@ export async function startMcpServer(window: BrowserWindow): Promise<McpStatus> 
   const port = Number.parseInt(process.env.MAP_GENERATOR_MCP_PORT ?? '', 10) || DEFAULT_PORT
   const host = process.env.MAP_GENERATOR_MCP_HOST || DEFAULT_HOST
 
-  const mcp = buildMcpServer(window)
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
-  transport.onerror = (err) => console.error('[mcp] transport error:', err)
-  await mcp.connect(transport)
-
   const app = express()
   app.use(express.json({ limit: '4mb' }))
 
+  // Stateless MCP transports cannot be reused across requests (the SDK throws on
+  // the second handleRequest), so spin up a fresh transport + McpServer for each
+  // incoming HTTP request and tear them down when the response closes.
   const handle = async (req: express.Request, res: express.Response) => {
+    const mcp = buildMcpServer(window)
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
+    transport.onerror = (err) => console.error('[mcp] transport error:', err)
+    res.on('close', () => {
+      transport.close().catch(() => {})
+      mcp.close().catch(() => {})
+    })
     try {
+      await mcp.connect(transport)
       await transport.handleRequest(req, res, req.body)
     } catch (err) {
       console.error('[mcp] request error:', err)
