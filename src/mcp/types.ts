@@ -11,6 +11,7 @@ export type McpToolName =
   | 'clear_results'
   | 'add_custom_layer'
   | 'verify_coverage'
+  | 'scan_coverage'
 
 export interface McpRequestEnvelope {
   id: string
@@ -49,7 +50,6 @@ export interface SetNbNeededArgs {
 export interface ListTerritoriesArgs {
   layer?: string
   search?: string
-  coverage?: 'official' | 'mixed' | 'unofficial' | 'none' | 'unknown' | 'any'
 }
 
 export interface AddCustomLayerArgs {
@@ -64,4 +64,11 @@ export interface VerifyCoverageArgs {
   layer?: string
   samples?: number
   radius?: number
+}
+
+export interface ScanCoverageArgs {
+  layer?: string
+  samples?: number
+  radius?: number
+  concurrency?: number
 }

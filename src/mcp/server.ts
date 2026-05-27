@@ -63,7 +63,7 @@ function buildMcpServer(window: BrowserWindow): McpServer {
     {
       title: 'List all available territories',
       description:
-        'Lists every polygon/territory the app knows about across world_borders and any custom GeoJSON layers in the geojson folder. Each result includes a Google Street View coverage category (official / mixed / unofficial / none / unknown) sourced from a curated map - use the `coverage` parameter to filter (e.g. only countries with full Google-car coverage). Useful for discovering what is available before calling select_territories.',
+        'Lists every polygon/territory the app knows about across world_borders and any custom GeoJSON layers in the geojson folder. Multi-polygon countries are deduplicated by ISO-2 code so you get one row per country. To determine which countries have Google Street View coverage, use verify_coverage (one country) or scan_coverage (all countries in a layer).',
       inputSchema: {
         layer: z
           .string()
@@ -73,12 +73,6 @@ function buildMcpServer(window: BrowserWindow): McpServer {
           .string()
           .optional()
           .describe('Case-insensitive substring filter on territory name or code.'),
-        coverage: z
-          .enum(['official', 'mixed', 'unofficial', 'none', 'unknown', 'any'])
-          .optional()
-          .describe(
-            "Filter by Google Street View coverage: 'official' (full Google-car coverage), 'mixed' (partial / city-limited Google-car coverage), 'unofficial' (only community Ari photospheres, no Google-car), 'none' (no Street View at all), 'unknown' (not in the curated dataset), or 'any' to include everything (default).",
-          ),
       },
     },
     async (args) => jsonResult(await callRenderer(window, 'list_territories', args)),
@@ -242,7 +236,7 @@ function buildMcpServer(window: BrowserWindow): McpServer {
     {
       title: 'Verify Google Street View coverage by tile probing',
       description:
-        'Probes Google\'s Street View coverage tiles at N random points inside a polygon and returns the hit ratio. Use this to verify the curated coverage map (the `coverage` field on list_territories) for countries where the curated value is `unknown` or seems wrong. The probe reads tiles in the renderer, so the polygon must belong to a layer that is loaded - world_borders is always loaded.',
+        "Probes Google's official Street View coverage tiles (the blue lines) at N random points inside a single country/polygon and returns the hit ratio. Authoritative: the result reflects current real-world Google coverage at the time of the call. Use scan_coverage to do this for every polygon in a layer at once.",
       inputSchema: {
         code: z.string().optional().describe('ISO-2 code to look up (preferred).'),
         name: z.string().optional().describe('Polygon name to look up (case-insensitive).'),
@@ -262,6 +256,43 @@ function buildMcpServer(window: BrowserWindow): McpServer {
       },
     },
     async (args) => jsonResult(await callRenderer(window, 'verify_coverage', args)),
+  )
+
+  server.registerTool(
+    'scan_coverage',
+    {
+      title: 'Scan Google Street View coverage across a whole layer',
+      description:
+        "Runs verify_coverage against every polygon in a layer (default: world_borders) with bounded concurrency, aggregates samples by ISO-2 code, and returns the results sorted by confidence (descending). Expensive: probes Google's coverage tiles for hundreds of countries, so expect a multi-minute call. Returns the authoritative coverage state at the time of the call - call once at the start of a session and reuse the results.",
+      inputSchema: {
+        layer: z
+          .string()
+          .optional()
+          .describe('Layer to scan, by key or label. Defaults to "world_borders".'),
+        samples: z
+          .number()
+          .int()
+          .positive()
+          .max(200)
+          .optional()
+          .describe('Random points to probe per polygon. Default 30, max 200.'),
+        radius: z
+          .number()
+          .positive()
+          .optional()
+          .describe('Detection radius in meters per probe. Default 1000.'),
+        concurrency: z
+          .number()
+          .int()
+          .positive()
+          .max(32)
+          .optional()
+          .describe(
+            'How many polygons to scan in parallel. Default 8. Higher = faster but more tile-server load; Google may rate-limit if pushed too hard.',
+          ),
+      },
+    },
+    async (args) => jsonResult(await callRenderer(window, 'scan_coverage', args)),
   )
 
   return server

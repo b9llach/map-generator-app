@@ -13,11 +13,11 @@ import {
 } from '@/map'
 import { blueLineDetector } from '@/composables/blueLineDetector'
 import { randomPointInPoly } from '@/composables/utils'
-import { getCoverage, type CoverageCategory } from './coverage'
 import type {
   AddCustomLayerArgs,
   ListTerritoriesArgs,
   McpToolName,
+  ScanCoverageArgs,
   SelectTerritoriesArgs,
   SetNbNeededArgs,
   VerifyCoverageArgs,
@@ -42,7 +42,6 @@ interface TerritoryRecord {
   country?: string
   layer: string
   layerLabel: string
-  coverage: CoverageCategory
 }
 
 async function listTerritories(args: ListTerritoriesArgs): Promise<TerritoryRecord[]> {
@@ -51,7 +50,6 @@ async function listTerritories(args: ListTerritoriesArgs): Promise<TerritoryReco
     : availableLayers.value
 
   const search = args.search?.toLowerCase()
-  const coverageFilter = args.coverage && args.coverage !== 'any' ? args.coverage : undefined
   const results: TerritoryRecord[] = []
   const seenCodes = new Set<string>()
 
@@ -66,8 +64,6 @@ async function listTerritories(args: ListTerritoriesArgs): Promise<TerritoryReco
         const haystack = `${props.name ?? ''} ${props.code ?? ''}`.toLowerCase()
         if (!haystack.includes(search)) return
       }
-      const coverage = getCoverage(props.code)
-      if (coverageFilter && coverage !== coverageFilter) return
       // world_borders has multiple features per multi-polygon country (e.g. RU, ES, US territories).
       // Dedupe by code+layer so the agent gets one row per country.
       const dedupeKey = `${layerMeta.key}::${props.code ?? props.name}`
@@ -79,7 +75,6 @@ async function listTerritories(args: ListTerritoriesArgs): Promise<TerritoryReco
         country: props.country,
         layer: layerMeta.key,
         layerLabel: layerMeta.label,
-        coverage,
       })
     })
   }
@@ -286,7 +281,108 @@ async function verifyCoverage(args: VerifyCoverageArgs) {
     hits,
     confidence: Math.round(confidence * 1000) / 1000,
     radiusMeters: radius,
-    curatedCoverage: getCoverage(props?.code),
+  }
+}
+
+interface ScanAggregate {
+  name?: string
+  code?: string
+  samples: number
+  hits: number
+}
+
+async function scanCoverage(args: ScanCoverageArgs) {
+  const layerKey = args.layer ?? 'world_borders'
+  const samples = Math.max(5, Math.min(args.samples ?? 30, 200))
+  const radius = args.radius && args.radius > 0 ? args.radius : 1000
+  const concurrency = Math.max(1, Math.min(args.concurrency ?? 8, 32))
+
+  const meta = availableLayers.value.find((l) => l.key === layerKey || l.label === layerKey)
+  if (!meta) throw new Error(`layer "${layerKey}" not found`)
+  const loaded = await ensureLayerLoaded(meta.key)
+  if (!loaded) throw new Error(`layer "${layerKey}" failed to load`)
+
+  const polygons: Polygon[] = []
+  loaded.eachLayer((polyL) => polygons.push(polyL as Polygon))
+  if (!polygons.length) {
+    return {
+      layer: meta.key,
+      samplesPerPolygon: samples,
+      radiusMeters: radius,
+      concurrency,
+      polygonsProbed: 0,
+      uniqueResults: 0,
+      results: [],
+    }
+  }
+
+  const aggregated = new Map<string, ScanAggregate>()
+  const failures: string[] = []
+
+  const probeOne = async (polygon: Polygon) => {
+    const props = polygon.feature?.properties
+    if (!props) return
+    const key = props.code || props.name
+    if (!key) return
+    try {
+      const bounds = polygon.getBounds()
+      const detector = await blueLineDetector(
+        { lat: bounds.getNorth(), lng: bounds.getWest() },
+        { lat: bounds.getSouth(), lng: bounds.getEast() },
+      )
+      let hits = 0
+      let actualSamples = 0
+      let attempts = 0
+      const maxAttempts = samples * 30
+      while (actualSamples < samples && attempts < maxAttempts) {
+        attempts++
+        const point = randomPointInPoly(polygon)
+        if (!booleanPointInPolygon([point.lng, point.lat], polygon.feature)) continue
+        actualSamples++
+        if (detector(point.lat, point.lng, radius)) hits++
+      }
+      const existing = aggregated.get(key)
+      if (existing) {
+        existing.samples += actualSamples
+        existing.hits += hits
+      } else {
+        aggregated.set(key, { name: props.name, code: props.code, samples: actualSamples, hits })
+      }
+    } catch (err) {
+      console.error(`[mcp] scan_coverage failed for ${key}:`, err)
+      failures.push(key)
+    }
+  }
+
+  const totalBatches = Math.ceil(polygons.length / concurrency)
+  for (let i = 0; i < polygons.length; i += concurrency) {
+    const batch = polygons.slice(i, i + concurrency)
+    const batchIndex = Math.floor(i / concurrency) + 1
+    console.log(
+      `[mcp] scan_coverage batch ${batchIndex}/${totalBatches} (${batch.length} polygons)`,
+    )
+    await Promise.allSettled(batch.map(probeOne))
+  }
+
+  const results = Array.from(aggregated.values())
+    .map((v) => ({
+      code: v.code,
+      name: v.name,
+      samples: v.samples,
+      hits: v.hits,
+      confidence: v.samples > 0 ? Math.round((v.hits / v.samples) * 1000) / 1000 : 0,
+    }))
+    .sort((a, b) => b.confidence - a.confidence || (a.name ?? '').localeCompare(b.name ?? ''))
+
+  return {
+    layer: meta.key,
+    samplesPerPolygon: samples,
+    radiusMeters: radius,
+    concurrency,
+    polygonsProbed: polygons.length,
+    uniqueResults: results.length,
+    failures,
+    results,
   }
 }
 
@@ -306,6 +402,7 @@ const handlers: Record<McpToolName, (args: any) => unknown | Promise<unknown>> =
   clear_results: clearResults,
   add_custom_layer: addCustomLayer,
   verify_coverage: verifyCoverage,
+  scan_coverage: scanCoverage,
 }
 
 export function dispatchMcpRequest(payload: { tool: string; args: unknown }): Promise<unknown> | unknown {
