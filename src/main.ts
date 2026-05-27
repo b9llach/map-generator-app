@@ -72,6 +72,38 @@ const createWindow = () => {
     shell.openPath(customFlagsDir)
   })
 
+  ipcMain.handle(
+    'save-custom-layer',
+    async (_event, name: string, geojson: unknown, overwrite: boolean = false) => {
+      if (typeof name !== 'string' || !name.trim()) {
+        throw new Error('name is required')
+      }
+      // Strip any directory components, force a .json/.geojson extension.
+      let safeName = path.basename(name.trim())
+      if (!/\.(json|geojson)$/i.test(safeName)) safeName += '.json'
+      if (!/^[a-zA-Z0-9_\- .]+\.(json|geojson)$/i.test(safeName) || safeName.startsWith('.')) {
+        throw new Error(
+          'name must contain only letters, digits, spaces, dot, hyphen, underscore (got: ' + name + ')',
+        )
+      }
+      const fullPath = path.join(customFlagsDir, safeName)
+
+      if (!overwrite) {
+        try {
+          await fs.access(fullPath)
+          throw new Error(`layer "${safeName}" already exists; pass overwrite=true to replace it`)
+        } catch (err: unknown) {
+          // ENOENT is what we want (file does not exist yet). Re-throw anything else.
+          if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') throw err
+        }
+      }
+
+      const serialized = JSON.stringify(geojson, null, 2)
+      await fs.writeFile(fullPath, serialized, 'utf-8')
+      return { path: fullPath, name: safeName, bytes: serialized.length }
+    },
+  )
+
   ipcMain.handle('load-custom-layers', async () => {
     try {
       const files = await fs.readdir(customFlagsDir)

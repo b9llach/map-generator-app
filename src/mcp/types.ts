@@ -9,6 +9,8 @@ export type McpToolName =
   | 'get_progress'
   | 'get_results'
   | 'clear_results'
+  | 'add_custom_layer'
+  | 'verify_coverage'
 
 export interface McpRequestEnvelope {
   id: string
@@ -48,4 +50,18 @@ export interface ListTerritoriesArgs {
   layer?: string
   search?: string
   coverage?: 'official' | 'mixed' | 'unofficial' | 'none' | 'unknown' | 'any'
+}
+
+export interface AddCustomLayerArgs {
+  name: string
+  geojson: unknown
+  overwrite?: boolean
+}
+
+export interface VerifyCoverageArgs {
+  code?: string
+  name?: string
+  layer?: string
+  samples?: number
+  radius?: number
 }

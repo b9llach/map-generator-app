@@ -1,3 +1,5 @@
+import booleanPointInPolygon from '@turf/boolean-point-in-polygon'
+
 import { useStore } from '@/store'
 import {
   availableLayers,
@@ -7,14 +9,21 @@ import {
   findLayerKeyForPolygon,
   clearMarkers,
   getLoadedLayers,
+  registerCustomLayer,
 } from '@/map'
+import { blueLineDetector } from '@/composables/blueLineDetector'
+import { randomPointInPoly } from '@/composables/utils'
 import { getCoverage, type CoverageCategory } from './coverage'
 import type {
+  AddCustomLayerArgs,
   ListTerritoriesArgs,
   McpToolName,
   SelectTerritoriesArgs,
   SetNbNeededArgs,
+  VerifyCoverageArgs,
 } from './types'
+
+const { electronAPI } = window
 
 type MatchClause = { name?: string; code?: string; layer?: string }
 
@@ -190,6 +199,97 @@ function clearResults() {
   return { cleared, polygons: selected.value.length }
 }
 
+async function addCustomLayer(args: AddCustomLayerArgs) {
+  if (typeof args?.name !== 'string' || !args.name.trim()) {
+    throw new Error("`name` is required")
+  }
+  if (!args.geojson || typeof args.geojson !== 'object') {
+    throw new Error("`geojson` must be a GeoJSON object")
+  }
+  // 1. Persist to disk via main process (returns the canonical file name on success).
+  const saved = (await electronAPI.invoke(
+    'save-custom-layer',
+    args.name,
+    args.geojson,
+    !!args.overwrite,
+  )) as { path: string; name: string; bytes: number }
+  // 2. Register in the running app so it is usable immediately without restart.
+  const registered = await registerCustomLayer(saved.name, args.geojson as GeoJSON.GeoJsonObject)
+  return {
+    name: saved.name,
+    path: saved.path,
+    bytes: saved.bytes,
+    replaced: registered.replaced,
+  }
+}
+
+async function verifyCoverage(args: VerifyCoverageArgs) {
+  if (!args.code && !args.name) {
+    throw new Error('Either `code` or `name` is required')
+  }
+  const requestedSamples = Math.max(10, Math.min(args.samples ?? 100, 500))
+  const radius = args.radius && args.radius > 0 ? args.radius : 1000
+
+  const layers = args.layer
+    ? availableLayers.value.filter((l) => l.key === args.layer || l.label === args.layer)
+    : availableLayers.value
+
+  // Find the polygon. world_borders has multiple features for multi-polygon countries;
+  // use the first match for sample-point generation (bounds + interior check work on either).
+  let found: Polygon | undefined
+  const wantedName = args.name?.toLowerCase()
+  for (const layerMeta of layers) {
+    const loaded = await ensureLayerLoaded(layerMeta.key)
+    if (!loaded) continue
+    loaded.eachLayer((polyL) => {
+      if (found) return
+      const polygon = polyL as Polygon
+      const props = polygon.feature?.properties
+      if (!props) return
+      if (args.code && props.code !== args.code) return
+      if (wantedName && props.name?.toLowerCase() !== wantedName) return
+      found = polygon
+    })
+    if (found) break
+  }
+  if (!found) {
+    throw new Error(
+      `polygon not found (code=${args.code ?? ''}, name=${args.name ?? ''}, layer=${args.layer ?? ''})`,
+    )
+  }
+
+  const props = found.feature?.properties
+  const bounds = found.getBounds()
+  const detector = await blueLineDetector(
+    { lat: bounds.getNorth(), lng: bounds.getWest() },
+    { lat: bounds.getSouth(), lng: bounds.getEast() },
+  )
+
+  let hits = 0
+  let actualSamples = 0
+  let attempts = 0
+  const maxAttempts = requestedSamples * 30
+  while (actualSamples < requestedSamples && attempts < maxAttempts) {
+    attempts++
+    const point = randomPointInPoly(found)
+    if (!booleanPointInPolygon([point.lng, point.lat], found.feature)) continue
+    actualSamples++
+    if (detector(point.lat, point.lng, radius)) hits++
+  }
+
+  const confidence = actualSamples > 0 ? hits / actualSamples : 0
+  return {
+    name: props?.name,
+    code: props?.code,
+    layer: findLayerKeyForPolygon(found),
+    samples: actualSamples,
+    hits,
+    confidence: Math.round(confidence * 1000) / 1000,
+    radiusMeters: radius,
+    curatedCoverage: getCoverage(props?.code),
+  }
+}
+
 const handlers: Record<McpToolName, (args: any) => unknown | Promise<unknown>> = {
   list_territories: listTerritories,
   list_selected: listSelected,
@@ -204,6 +304,8 @@ const handlers: Record<McpToolName, (args: any) => unknown | Promise<unknown>> =
   get_progress: getProgress,
   get_results: getResults,
   clear_results: clearResults,
+  add_custom_layer: addCustomLayer,
+  verify_coverage: verifyCoverage,
 }
 
 export function dispatchMcpRequest(payload: { tool: string; args: unknown }): Promise<unknown> | unknown {

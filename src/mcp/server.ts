@@ -210,6 +210,60 @@ function buildMcpServer(window: BrowserWindow): McpServer {
     async () => jsonResult(await callRenderer(window, 'clear_results', {})),
   )
 
+  server.registerTool(
+    'add_custom_layer',
+    {
+      title: 'Add a custom GeoJSON layer',
+      description:
+        'Saves a GeoJSON FeatureCollection as <userData>/geojson/<name>.json and registers it as a layer in the running app so it can be referenced immediately by select_territories, list_territories, etc. Pass overwrite=true to replace an existing layer with the same name.',
+      inputSchema: {
+        name: z
+          .string()
+          .min(1)
+          .describe(
+            'File name for the layer (with or without .json/.geojson extension). Only letters, digits, spaces, dot, hyphen, underscore allowed.',
+          ),
+        geojson: z
+          .unknown()
+          .describe(
+            'A GeoJSON object - typically a FeatureCollection of Polygon/MultiPolygon features with at least a `name` property (and ideally a `code`) for each feature.',
+          ),
+        overwrite: z
+          .boolean()
+          .optional()
+          .describe('Overwrite an existing layer with the same name. Defaults to false.'),
+      },
+    },
+    async (args) => jsonResult(await callRenderer(window, 'add_custom_layer', args)),
+  )
+
+  server.registerTool(
+    'verify_coverage',
+    {
+      title: 'Verify Google Street View coverage by tile probing',
+      description:
+        'Probes Google\'s Street View coverage tiles at N random points inside a polygon and returns the hit ratio. Use this to verify the curated coverage map (the `coverage` field on list_territories) for countries where the curated value is `unknown` or seems wrong. The probe reads tiles in the renderer, so the polygon must belong to a layer that is loaded - world_borders is always loaded.',
+      inputSchema: {
+        code: z.string().optional().describe('ISO-2 code to look up (preferred).'),
+        name: z.string().optional().describe('Polygon name to look up (case-insensitive).'),
+        layer: z.string().optional().describe('Restrict the lookup to one layer (key or label).'),
+        samples: z
+          .number()
+          .int()
+          .positive()
+          .max(500)
+          .optional()
+          .describe('Number of random points to probe inside the polygon. Default 100, max 500.'),
+        radius: z
+          .number()
+          .positive()
+          .optional()
+          .describe('Detection radius in meters for each probe. Default 1000.'),
+      },
+    },
+    async (args) => jsonResult(await callRenderer(window, 'verify_coverage', args)),
+  )
+
   return server
 }
 

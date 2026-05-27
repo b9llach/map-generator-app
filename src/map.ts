@@ -645,6 +645,28 @@ function getLoadedLayers() {
   return loadedLayers
 }
 
+async function registerCustomLayer(
+  name: string,
+  geojson: GeoJSON.GeoJsonObject,
+): Promise<{ key: string; label: string; replaced: boolean }> {
+  if (!isValidGeoJSON(geojson)) {
+    throw new Error('Invalid GeoJSON')
+  }
+  const existingIndex = availableLayers.value.findIndex((l) => l.key === name || l.label === name)
+  const replaced = existingIndex !== -1
+  if (replaced) {
+    const old = loadedLayers[availableLayers.value[existingIndex].key]
+    if (old && map.hasLayer(old)) map.removeLayer(old)
+    delete loadedLayers[availableLayers.value[existingIndex].key]
+    availableLayers.value.splice(existingIndex, 1)
+  }
+  const meta: LayerMeta = { label: name, key: name, source: geojson, visible: true }
+  availableLayers.value.push(meta)
+  const loaded = await loadLayer(meta)
+  map.addLayer(loaded)
+  return { key: meta.key, label: meta.label, replaced }
+}
+
 export {
   L,
   initMap,
@@ -655,6 +677,7 @@ export {
   findLayerKeyForPolygon,
   ensureLayerLoaded,
   getLoadedLayers,
+  registerCustomLayer,
   clearPolygon,
   toggleLayer,
   // importLayer,
